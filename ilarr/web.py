@@ -115,7 +115,7 @@ def serve(engine, host, port, run_cycle):
 
     @route("GET", "/api/downloads")
     def downloads(q, body):
-        return db.q("SELECT d.*, s.title, s.cover FROM downloads d LEFT JOIN series s ON s.id=d.series_id"
+        return db.q("SELECT d.*, s.title AS series_title, s.cover FROM downloads d LEFT JOIN series s ON s.id=d.series_id"
                     " ORDER BY d.id DESC LIMIT 100")
 
     @route("POST", "/api/run")
