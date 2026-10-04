@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import time
+import tempfile
 from collections import defaultdict
 
 from . import anilist, indexers
@@ -208,7 +209,8 @@ class Engine:
         return grabbed
 
     def _wants(self, ep, s, rel, score):
-        if not ep or not ep["air_date"]:
+        cutoff = time.time() - self.cfg["release_delay_minutes"] * 60
+        if not ep or not ep["air_date"] or ep["air_date"] > cutoff:
             return False
         if ep["status"] == "missing":
             return True
@@ -295,25 +297,33 @@ class Engine:
         folder = os.path.join(s["path"], "Season %02d" % s["season"])
         os.makedirs(folder, exist_ok=True)
         dst = os.path.join(folder, safe(name) + ext)
-        if os.path.exists(dst):
-            os.remove(dst)
         mode = self.cfg["import_mode"]
-        if mode == "move":
-            shutil.move(src, dst)
-        elif mode == "hardlink":
-            try:
-                os.link(src, dst)
-            except OSError:
-                shutil.copy2(src, dst)
-        else:
-            shutil.copy2(src, dst)
+        # Stage on the destination filesystem so a failed transfer cannot destroy
+        # the existing episode. Keep the move source until publication succeeds.
+        with tempfile.TemporaryDirectory(prefix=".ilarr-", dir=folder) as staging:
+            staged = os.path.join(staging, "video" + ext)
+            if mode in ("hardlink", "move"):
+                try:
+                    os.link(src, staged)
+                except OSError:
+                    shutil.copy2(src, staged)
+            else:
+                shutil.copy2(src, staged)
+            os.replace(staged, dst)
+        old_files = set()
         for n in eps:
             old = self.db.one("SELECT file FROM episodes WHERE series_id=? AND number=?", (s["id"], n))
-            if old and old["file"] and old["file"] != dst and os.path.exists(old["file"]):
-                os.remove(old["file"])  # upgraded
+            if old and old["file"] and old["file"] != dst:
+                old_files.add(old["file"])
             self.db.x("UPDATE episodes SET status='downloaded', file=?, score=?, res=?, version=?, grp=?"
                       " WHERE series_id=? AND number=?",
                       (dst, d["score"], d["res"], d["version"], d["grp"], s["id"], n))
+        for old_file in old_files:
+            if not self.db.one("SELECT 1 FROM episodes WHERE file=? LIMIT 1", (old_file,)):
+                if os.path.exists(old_file):
+                    os.remove(old_file)
+        if mode == "move" and os.path.abspath(src) != os.path.abspath(dst) and os.path.exists(src):
+            os.remove(src)
         log.info("imported %s", dst)
 
     # ------------------------------------------------------------------ loop

@@ -20,6 +20,11 @@ def redacted(cfg):
     for k in ("tmdb", "tvdb", "prowlarr"):
         if c[k].get("api_key"):
             c[k]["api_key"] = "***"
+    if c["tvdb"].get("pin"):
+        c["tvdb"]["pin"] = "***"
+    for indexer in c.get("indexers", []):
+        if indexer.get("api_key"):
+            indexer["api_key"] = "***"
     return c
 
 
