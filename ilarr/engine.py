@@ -308,7 +308,10 @@ class Engine:
         mode = self.cfg["import_mode"]
         # Stage on the destination filesystem so a failed transfer cannot destroy
         # the existing episode. Keep the move source until publication succeeds.
-        with tempfile.TemporaryDirectory(prefix=".ilarr-", dir=folder) as staging:
+        staging = tempfile.mkdtemp(prefix=".ilarr-", dir=folder)
+        cleanup = True
+        old_files = set()
+        try:
             staged = os.path.join(staging, "video" + ext)
             if mode in ("hardlink", "move"):
                 try:
@@ -317,20 +320,52 @@ class Engine:
                     shutil.copy2(src, staged)
             else:
                 shutil.copy2(src, staged)
-            os.replace(staged, dst)
-        old_files = set()
-        for n in eps:
-            old = self.db.one("SELECT file FROM episodes WHERE series_id=? AND number=?", (s["id"], n))
-            if old and old["file"] and old["file"] != dst:
-                old_files.add(old["file"])
-            self.db.x("UPDATE episodes SET status='downloaded', file=?, score=?, res=?, version=?, grp=?"
-                      " WHERE series_id=? AND number=?",
-                      (dst, d["score"], d["res"], d["version"], d["grp"], s["id"], n))
+            backup = os.path.join(staging, "previous" + ext)
+            replaced = False
+            with self.db.lock:
+                try:
+                    with self.db.c:
+                        self.db.c.execute("BEGIN IMMEDIATE")
+                        for n in eps:
+                            old = self.db.one("SELECT file FROM episodes WHERE series_id=? AND number=?",
+                                              (s["id"], n))
+                            if old and old["file"] and old["file"] != dst:
+                                old_files.add(old["file"])
+                            # DB.x commits each statement; use the connection so
+                            # all episodes commit together.
+                            self.db.c.execute(
+                                "UPDATE episodes SET status='downloaded', file=?, score=?, res=?, version=?, grp=?"
+                                " WHERE series_id=? AND number=?",
+                                (dst, d["score"], d["res"], d["version"], d["grp"], s["id"], n))
+                        if os.path.exists(dst):
+                            try:
+                                os.link(dst, backup)
+                            except OSError:
+                                shutil.copy2(dst, backup)
+                        os.replace(staged, dst)
+                        replaced = True
+                    # The backup can be discarded only after the commit succeeds.
+                except BaseException:
+                    if replaced:
+                        try:
+                            if os.path.exists(backup):
+                                os.replace(backup, dst)
+                            else:
+                                os.remove(dst)
+                        except OSError:
+                            cleanup = False
+                            log.exception("file rollback failed; recovery files retained in %s", staging)
+                            raise
+                    raise
+        finally:
+            if cleanup:
+                shutil.rmtree(staging)
         for old_file in old_files:
             if not self.db.one("SELECT 1 FROM episodes WHERE file=? LIMIT 1", (old_file,)):
                 if os.path.exists(old_file):
                     os.remove(old_file)
-        if mode == "move" and os.path.abspath(src) != os.path.abspath(dst) and os.path.exists(src):
+        if (mode == "move" and os.path.abspath(src) != os.path.abspath(dst) and os.path.exists(src)
+                and not self.db.one("SELECT 1 FROM episodes WHERE file=? LIMIT 1", (src,))):
             os.remove(src)
         log.info("imported %s", dst)
 

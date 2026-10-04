@@ -1,6 +1,7 @@
 import copy
 import os
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -69,11 +70,101 @@ class ImportTests(unittest.TestCase):
     def test_publication_failure_preserves_move_source(self):
         """Verify a failed move publication preserves both source and destination."""
         self.cfg['import_mode'] = 'move'
+        before = self.db.q('SELECT * FROM episodes')
         with patch('ilarr.engine.os.replace', side_effect=OSError('cannot replace')):
             with self.assertRaises(OSError):
                 self.place()
         self.assertEqual(self.source.read_bytes(), b'replacement')
         self.assertEqual(self.destination.read_bytes(), b'original')
+        self.assertEqual(self.db.q('SELECT * FROM episodes'), before)
+
+    def prepare_multi_episode_import(self):
+        self.db.x('INSERT INTO episodes(series_id,number,status,file) VALUES(?,?,?,?)',
+                  (self.series['id'], 2, 'downloaded', str(self.destination)))
+        return self.destination.with_name('Show - S01E01-E02 [1080p].mkv')
+
+    def reject_commit(self):
+        # A deferred constraint fails at COMMIT, after both UPDATEs and publication.
+        self.db.x('PRAGMA foreign_keys=ON')
+        self.db.x('CREATE TABLE commit_parent(id INTEGER PRIMARY KEY)')
+        self.db.x('CREATE TABLE commit_child(parent_id INTEGER REFERENCES commit_parent(id) '
+                  'DEFERRABLE INITIALLY DEFERRED)')
+        self.db.x('CREATE TRIGGER reject_commit AFTER UPDATE ON episodes '
+                  'BEGIN INSERT INTO commit_child VALUES(1); END')
+
+    def test_second_episode_update_failure_rolls_back_import(self):
+        target = self.prepare_multi_episode_import()
+        target.write_bytes(b'previous batch')
+        self.cfg['import_mode'] = 'move'
+        before = self.db.q('SELECT * FROM episodes')
+        self.db.x("CREATE TRIGGER reject_update BEFORE UPDATE ON episodes WHEN NEW.number=2 "
+                  "BEGIN SELECT RAISE(ABORT, 'update failed'); END")
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'update failed'):
+            self.engine.place(self.series, str(self.source), [1, 2], self.rel, self.download)
+        self.assertEqual(self.db.q('SELECT * FROM episodes'), before)
+        self.assertEqual(target.read_bytes(), b'previous batch')
+        self.assertEqual(self.destination.read_bytes(), b'original')
+        self.assertEqual(self.source.read_bytes(), b'replacement')
+        self.assertFalse(self.db.c.in_transaction)
+        self.assertEqual(list(target.parent.glob('.ilarr-*')), [])
+
+    def test_commit_failure_restores_files_and_all_episode_metadata(self):
+        target = self.prepare_multi_episode_import()
+        self.cfg['import_mode'] = 'move'
+        before = self.db.q('SELECT * FROM episodes')
+        self.reject_commit()
+        for existing in (False, True):
+            with self.subTest(existing_destination=existing):
+                if existing:
+                    target.write_bytes(b'previous batch')
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.engine.place(self.series, str(self.source), [1, 2], self.rel, self.download)
+                self.assertEqual(self.db.q('SELECT * FROM episodes'), before)
+                self.assertEqual(target.exists(), existing)
+                if existing:
+                    self.assertEqual(target.read_bytes(), b'previous batch')
+                self.assertEqual(self.destination.read_bytes(), b'original')
+                self.assertEqual(self.source.read_bytes(), b'replacement')
+                self.assertFalse(self.db.c.in_transaction)
+                self.assertEqual(list(target.parent.glob('.ilarr-*')), [])
+
+    def test_failed_file_rollback_retains_recoverable_backup(self):
+        self.reject_commit()
+        replace = os.replace
+
+        def fail_restore(src, dst):
+            if Path(src).name == 'previous.mkv':
+                raise OSError('cannot restore')
+            return replace(src, dst)
+
+        before = self.db.q('SELECT * FROM episodes')
+        with patch('ilarr.engine.os.replace', side_effect=fail_restore):
+            with self.assertLogs('ilarr', level='ERROR'):
+                with self.assertRaisesRegex(OSError, 'cannot restore'):
+                    self.place()
+        self.assertEqual(self.db.q('SELECT * FROM episodes'), before)
+        backups = list(self.destination.parent.glob('.ilarr-*/previous.mkv'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), b'original')
+
+    def test_multi_episode_success_commits_before_cleanup(self):
+        target = self.prepare_multi_episode_import()
+        target.write_bytes(b'previous batch')
+        self.cfg['import_mode'] = 'move'
+        remove = os.remove
+
+        def check_committed_before_remove(path):
+            with sqlite3.connect(str(self.root / 'state.db')) as observer:
+                rows = observer.execute('SELECT file, version FROM episodes').fetchall()
+            self.assertEqual(rows, [(str(target), 2), (str(target), 2)])
+            return remove(path)
+
+        with patch('ilarr.engine.os.remove', side_effect=check_committed_before_remove):
+            self.engine.place(self.series, str(self.source), [1, 2], self.rel, self.download)
+        self.assertEqual(target.read_bytes(), b'replacement')
+        self.assertFalse(self.destination.exists())
+        self.assertFalse(self.source.exists())
+        self.assertEqual(list(target.parent.glob('.ilarr-*')), [])
 
     def test_successful_import_modes(self):
         """Check file contents, source retention, and metadata for each import mode."""
@@ -107,6 +198,23 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(self.db.one('SELECT file FROM episodes WHERE number=2')['file'], str(shared))
         self.engine.place(self.series, str(self.source), [2], self.rel, self.download)
         self.assertFalse(shared.exists())
+
+    def test_move_preserves_source_referenced_by_another_episode(self):
+        self.cfg['import_mode'] = 'move'
+        self.db.x('UPDATE episodes SET file=?', (str(self.source),))
+        self.db.x('INSERT INTO episodes(series_id,number,status,file) VALUES(?,?,?,?)',
+                  (self.series['id'], 2, 'downloaded', str(self.source)))
+        self.place()
+        self.assertEqual(self.source.read_bytes(), b'replacement')
+        self.assertEqual(self.db.one('SELECT file FROM episodes WHERE number=2')['file'], str(self.source))
+        self.engine.place(self.series, str(self.source), [2], self.rel, self.download)
+        self.assertFalse(self.source.exists())
+
+    def test_move_preserves_source_when_it_is_the_destination(self):
+        self.cfg['import_mode'] = 'move'
+        self.source = self.destination
+        self.place()
+        self.assertEqual(self.destination.read_bytes(), b'original')
 
 
 class SelectionTests(unittest.TestCase):
