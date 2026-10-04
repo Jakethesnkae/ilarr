@@ -15,11 +15,17 @@ SERIES_COLS = ("id,anilist_id,title,title_english,title_native,format,status,tot
 
 
 def redacted(cfg):
+    """Return a copy of the configuration with passwords, API keys, and PINs masked."""
     c = json.loads(json.dumps(cfg))
     c["qbittorrent"]["password"] = "***" if c["qbittorrent"].get("password") else ""
     for k in ("tmdb", "tvdb", "prowlarr"):
         if c[k].get("api_key"):
             c[k]["api_key"] = "***"
+    if c["tvdb"].get("pin"):
+        c["tvdb"]["pin"] = "***"
+    for indexer in c.get("indexers", []):
+        if indexer.get("api_key"):
+            indexer["api_key"] = "***"
     return c
 
 

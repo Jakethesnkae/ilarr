@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import time
+import tempfile
 from collections import defaultdict
 
 from . import anilist, indexers
@@ -208,7 +209,9 @@ class Engine:
         return grabbed
 
     def _wants(self, ep, s, rel, score):
-        if not ep or not ep["air_date"]:
+        """Return whether a release fills a gap or upgrades an episode after its delay."""
+        cutoff = time.time() - self.cfg["release_delay_minutes"] * 60
+        if not ep or not ep["air_date"] or ep["air_date"] > cutoff:
             return False
         if ep["status"] == "missing":
             return True
@@ -285,6 +288,13 @@ class Engine:
         self.db.update("downloads", "id", d["id"], status="imported")
 
     def place(self, s, src, eps, rel, d):
+        """Stage and publish a video, then update its episodes and remove unused files.
+
+        Use the configured copy, hardlink, or move mode, falling back to copying
+        when linking fails. Preserve the destination if staging or publication
+        fails, and retain a move source until publication and metadata updates
+        succeed. Remove replaced files only when no episodes reference them.
+        """
         ext = os.path.splitext(src)[1]
         tag = "E%02d" % (s["season_offset"] + eps[0])
         if len(eps) > 1:
@@ -295,25 +305,68 @@ class Engine:
         folder = os.path.join(s["path"], "Season %02d" % s["season"])
         os.makedirs(folder, exist_ok=True)
         dst = os.path.join(folder, safe(name) + ext)
-        if os.path.exists(dst):
-            os.remove(dst)
         mode = self.cfg["import_mode"]
-        if mode == "move":
-            shutil.move(src, dst)
-        elif mode == "hardlink":
-            try:
-                os.link(src, dst)
-            except OSError:
-                shutil.copy2(src, dst)
-        else:
-            shutil.copy2(src, dst)
-        for n in eps:
-            old = self.db.one("SELECT file FROM episodes WHERE series_id=? AND number=?", (s["id"], n))
-            if old and old["file"] and old["file"] != dst and os.path.exists(old["file"]):
-                os.remove(old["file"])  # upgraded
-            self.db.x("UPDATE episodes SET status='downloaded', file=?, score=?, res=?, version=?, grp=?"
-                      " WHERE series_id=? AND number=?",
-                      (dst, d["score"], d["res"], d["version"], d["grp"], s["id"], n))
+        # Stage on the destination filesystem so a failed transfer cannot destroy
+        # the existing episode. Keep the move source until publication succeeds.
+        staging = tempfile.mkdtemp(prefix=".ilarr-", dir=folder)
+        cleanup = True
+        old_files = set()
+        try:
+            staged = os.path.join(staging, "video" + ext)
+            if mode in ("hardlink", "move"):
+                try:
+                    os.link(src, staged)
+                except OSError:
+                    shutil.copy2(src, staged)
+            else:
+                shutil.copy2(src, staged)
+            backup = os.path.join(staging, "previous" + ext)
+            replaced = False
+            with self.db.lock:
+                try:
+                    with self.db.c:
+                        self.db.c.execute("BEGIN IMMEDIATE")
+                        for n in eps:
+                            old = self.db.one("SELECT file FROM episodes WHERE series_id=? AND number=?",
+                                              (s["id"], n))
+                            if old and old["file"] and old["file"] != dst:
+                                old_files.add(old["file"])
+                            # DB.x commits each statement; use the connection so
+                            # all episodes commit together.
+                            self.db.c.execute(
+                                "UPDATE episodes SET status='downloaded', file=?, score=?, res=?, version=?, grp=?"
+                                " WHERE series_id=? AND number=?",
+                                (dst, d["score"], d["res"], d["version"], d["grp"], s["id"], n))
+                        if os.path.exists(dst):
+                            try:
+                                os.link(dst, backup)
+                            except OSError:
+                                shutil.copy2(dst, backup)
+                        os.replace(staged, dst)
+                        replaced = True
+                    # The backup can be discarded only after the commit succeeds.
+                except BaseException:
+                    if replaced:
+                        try:
+                            if os.path.exists(backup):
+                                os.replace(backup, dst)
+                            else:
+                                os.remove(dst)
+                        except OSError:
+                            cleanup = False
+                            log.exception("file rollback failed; recovery files retained in %s", staging)
+                            raise
+                    raise
+        finally:
+            if cleanup:
+                shutil.rmtree(staging)
+        for old_file in old_files:
+            if not self.db.one("SELECT 1 FROM episodes WHERE file=? LIMIT 1", (old_file,)):
+                if os.path.exists(old_file):
+                    os.remove(old_file)
+        if (mode == "move" and os.path.abspath(src) != os.path.abspath(dst) and os.path.exists(src)
+                and not self.db.one("SELECT 1 FROM episodes WHERE file=? LIMIT 1", (src,))):
+            os.remove(src)
         log.info("imported %s", dst)
 
     # ------------------------------------------------------------------ loop
