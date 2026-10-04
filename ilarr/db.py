@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import threading
 
@@ -23,6 +24,7 @@ JSON_COLS = ("aliases", "franchise_aliases", "profile")
 
 class DB:
     def __init__(self, path):
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.c = sqlite3.connect(path, check_same_thread=False)
         self.c.row_factory = sqlite3.Row
         self.lock = threading.RLock()

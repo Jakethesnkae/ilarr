@@ -9,6 +9,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"   # lets the defaults reach services on the Docker host
     environment:
+      PUID: ${PUID:-1000}   # user/group the app runs as; match the owner of your media folders
+      PGID: ${PGID:-1000}
       ILARR_QBIT_URL: ${QBIT_URL:-http://host.docker.internal:8080}
       ILARR_QBIT_USER: ${QBIT_USER:-admin}
       ILARR_QBIT_PASS: ${QBIT_PASS:-adminadmin}
