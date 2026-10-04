@@ -8,7 +8,7 @@ python -m ilarr init                  # writes config.json (edit qBittorrent, li
 python -m ilarr search "frieren"      # find the AniList id
 python -m ilarr add 154587            # track it (optionally --tvdb ID --tmdb ID)
 python -m ilarr serve                 # scheduler + web UI on http://127.0.0.1:8989
-python -m unittest tests.test_core    # offline tests
+python -m unittest discover -t . -s tests   # offline tests
 ```
 
 ## Prowlarr
