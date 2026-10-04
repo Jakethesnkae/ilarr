@@ -7,12 +7,12 @@ from urllib.parse import urlparse, parse_qs
 from . import anilist
 
 PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>anirr</title><style>
+<title>ilarr</title><style>
 body{font:15px system-ui;max-width:900px;margin:2rem auto;padding:0 1rem;background:#111;color:#ddd}
 input,button{font:inherit;padding:.4rem .6rem;background:#222;color:#ddd;border:1px solid #444;border-radius:4px}
 button{cursor:pointer}a{color:#7ab}table{width:100%;border-collapse:collapse}td,th{padding:.3rem;text-align:left;border-bottom:1px solid #222}
 .missing{color:#e66}.queued{color:#ea4}.downloaded{color:#6c6}small{color:#888}</style>
-<h2>anirr</h2>
+<h2>ilarr</h2>
 <p><input id=q placeholder="search AniList"> <button onclick=find()>Search</button>
 <button onclick="post('/api/run').then(load)">Run cycle</button></p>
 <div id=res></div><h3>Series</h3><table id=list></table><div id=eps></div>

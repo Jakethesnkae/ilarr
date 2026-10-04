@@ -1,15 +1,26 @@
-# anirr
+# ilarr
 
 A small anime PVR (Sonarr-style): tracks series, watches indexers, grabs the best release
 per episode, hands it to qBittorrent, then renames and imports it. Python 3.8+, **no third-party dependencies**.
 
 ```
-python -m anirr init                  # writes config.json (edit qBittorrent, library, API keys)
-python -m anirr search "frieren"      # find the AniList id
-python -m anirr add 154587            # track it (optionally --tvdb ID --tmdb ID)
-python -m anirr serve                 # scheduler + web UI on http://127.0.0.1:8989
+python -m ilarr init                  # writes config.json (edit qBittorrent, library, API keys)
+python -m ilarr search "frieren"      # find the AniList id
+python -m ilarr add 154587            # track it (optionally --tvdb ID --tmdb ID)
+python -m ilarr serve                 # scheduler + web UI on http://127.0.0.1:8989
 python -m unittest tests.test_core    # offline tests
 ```
+
+## Docker
+```
+cp .env.example .env        # set QBIT_PASS, optional TMDB/TVDB keys
+docker compose up -d        # ilarr on :8989, qBittorrent on :8080
+```
+`docker-compose.yml` runs ilarr plus qBittorrent sharing one downloads folder. State (config + DB) lives in `./config`.
+Settings can come from `config/config.json` or env vars (`ILARR_QBIT_URL`, `ILARR_QBIT_USER`, `ILARR_QBIT_PASS`,
+`ILARR_QBIT_SAVE_PATH`, `ILARR_TMDB_KEY`, `ILARR_TVDB_KEY`, `ILARR_SEASON_SOURCE`, `ILARR_HOST`, `ILARR_PORT`, `ILARR_DB`,
+`ILARR_LIBRARY`); env vars win. Using your own qBittorrent: delete that service and mount its download folder at the same path.
+Don't expose port 8989 to the internet: the UI has no authentication.
 
 ## How it avoids Sonarr's anime pain points
 
@@ -21,7 +32,7 @@ python -m unittest tests.test_core    # offline tests
 | JP/EN titles & bad aliases | Aliases = AniList romaji/english/native/synonyms + TMDB alt titles + TVDB aliases/translations, all normalised. `Romaji / English` release titles are split. |
 | Specials / OVA / movies | AniList formats OVA/SPECIAL/MOVIE/ONA are tracked as their own entries (season 0) linked to the franchise. |
 | Multi-episode files / batches | Parser yields episode lists and ranges; batches map each number across seasons; imports re-parse every file in the torrent. |
-| Non-standard release naming | One parser (`parser.py`) handles `S01E01`, `- 01`, `001`, `01v2`, `EP01`, `[01]`, `OVA 2`, `(01-12)`, scene `.` names. `python -m anirr parse "<title>"` shows what it saw. |
+| Non-standard release naming | One parser (`parser.py`) handles `S01E01`, `- 01`, `001`, `01v2`, `EP01`, `[01]`, `OVA 2`, `(01-12)`, scene `.` names. `python -m ilarr parse "<title>"` shows what it saw. |
 | Dub/sub/dual | Profile `audio`: `sub` (rejects dubs), `dub`, `dual`, `any`. |
 
 ## TMDB / TVDB

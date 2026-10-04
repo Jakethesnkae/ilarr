@@ -6,7 +6,7 @@ import urllib.request
 
 
 class QBit:
-    def __init__(self, url, username="", password="", category="anirr"):
+    def __init__(self, url, username="", password="", category="ilarr"):
         self.url, self.user, self.pw, self.category = url.rstrip("/"), username, password, category
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
         self.logged_in = False

@@ -12,7 +12,7 @@ from .web import serve
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="anirr", description="Simple anime PVR")
+    ap = argparse.ArgumentParser(prog="ilarr", description="Simple anime PVR")
     ap.add_argument("-c", "--config", default="config.json")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("serve", help="run scheduler + web UI")

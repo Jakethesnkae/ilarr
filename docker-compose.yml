@@ -1,0 +1,41 @@
+# Put secrets in a .env file next to this one (see .env.example).
+services:
+  ilarr:
+    build: .
+    container_name: ilarr
+    restart: unless-stopped
+    ports:
+      - "8989:8989"
+    environment:
+      ILARR_QBIT_URL: http://qbittorrent:8080
+      ILARR_QBIT_USER: ${QBIT_USER:-admin}
+      ILARR_QBIT_PASS: ${QBIT_PASS:-adminadmin}
+      # Must be the path *inside the shared volume*, so ilarr can read what qBittorrent downloads
+      ILARR_QBIT_SAVE_PATH: /downloads
+      ILARR_TMDB_KEY: ${TMDB_API_KEY:-}
+      ILARR_TVDB_KEY: ${TVDB_API_KEY:-}
+      ILARR_SEASON_SOURCE: ${SEASON_SOURCE:-anilist}   # anilist | tvdb | tmdb
+    volumes:
+      - ./config:/config
+      - ${LIBRARY_DIR:-./library}:/library
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads   # same host dir qBittorrent writes to
+    depends_on:
+      - qbittorrent
+
+  # Optional: remove this service and point ILARR_QBIT_URL at your own qBittorrent
+  # (then mount its download dir at the same path in ilarr; hardlinks need the same filesystem
+  # as the library, so keep DOWNLOADS_DIR and LIBRARY_DIR on one disk or set import_mode=copy).
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: ${TZ:-UTC}
+      WEBUI_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./qbittorrent-config:/config
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads

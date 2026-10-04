@@ -2,7 +2,7 @@ import json
 import urllib.request
 import urllib.parse
 
-UA = "anirr/0.1"
+UA = "ilarr/0.1"
 
 
 def request(url, data=None, headers=None, method=None, timeout=30, raw=False):

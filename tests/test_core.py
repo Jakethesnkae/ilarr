@@ -1,8 +1,8 @@
 import unittest
-from anirr.parser import parse, norm
-from anirr.matcher import match
-from anirr.providers import remap
-from anirr.quality import evaluate, DEFAULT_PROFILE
+from ilarr.parser import parse, norm
+from ilarr.matcher import match
+from ilarr.providers import remap
+from ilarr.quality import evaluate, DEFAULT_PROFILE
 
 
 def S(id, title, fmt="TV", total=12, season=1, soff=0, aoff=0, fid=1, extra=(), fam=()):

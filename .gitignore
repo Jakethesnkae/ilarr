@@ -3,3 +3,7 @@ __pycache__/
 config.json
 *.db
 library/
+.env
+config/
+qbittorrent-config/
+downloads/

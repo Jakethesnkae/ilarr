@@ -14,14 +14,14 @@ from .providers import Tmdb, Tvdb, remap
 from .qbit import QBit
 from .quality import DEFAULT_PROFILE, evaluate, is_upgrade
 
-log = logging.getLogger("anirr")
+log = logging.getLogger("ilarr")
 DEFAULT_CONFIG = {
     "library": "library",
-    "db": "anirr.db",
+    "db": "ilarr.db",
     "listen": ["127.0.0.1", 8989],
     "indexers": [{"name": "Nyaa", "url": "https://nyaa.si/?page=rss&c=1_2&f=0&q={query}"}],
     "qbittorrent": {"url": "http://127.0.0.1:8080", "username": "admin", "password": "adminadmin",
-                    "category": "anirr", "save_path": None},
+                    "category": "ilarr", "save_path": None},
     "tmdb": {"api_key": ""},
     "tvdb": {"api_key": "", "pin": ""},
     "season_source": "anilist",       # anilist | tmdb | tvdb  (which season layout to name files with)
@@ -43,6 +43,20 @@ def load_config(path):
                     cfg[k].update(v)
                 else:
                     cfg[k] = v
+    # Environment overrides (handy for Docker); they win over config.json
+    env = os.environ.get
+    if env("ILARR_HOST"): cfg["listen"][0] = env("ILARR_HOST")
+    if env("ILARR_PORT"): cfg["listen"][1] = int(env("ILARR_PORT"))
+    if env("ILARR_DB"): cfg["db"] = env("ILARR_DB")
+    if env("ILARR_LIBRARY"): cfg["library"] = env("ILARR_LIBRARY")
+    if env("ILARR_QBIT_URL"): cfg["qbittorrent"]["url"] = env("ILARR_QBIT_URL")
+    if env("ILARR_QBIT_USER"): cfg["qbittorrent"]["username"] = env("ILARR_QBIT_USER")
+    if env("ILARR_QBIT_PASS"): cfg["qbittorrent"]["password"] = env("ILARR_QBIT_PASS")
+    if env("ILARR_QBIT_SAVE_PATH"): cfg["qbittorrent"]["save_path"] = env("ILARR_QBIT_SAVE_PATH")
+    if env("ILARR_TMDB_KEY"): cfg["tmdb"]["api_key"] = env("ILARR_TMDB_KEY")
+    if env("ILARR_TVDB_KEY"): cfg["tvdb"]["api_key"] = env("ILARR_TVDB_KEY")
+    if env("ILARR_TVDB_PIN"): cfg["tvdb"]["pin"] = env("ILARR_TVDB_PIN")
+    if env("ILARR_SEASON_SOURCE"): cfg["season_source"] = env("ILARR_SEASON_SOURCE")
     return cfg
 
 
@@ -196,7 +210,7 @@ class Engine:
                         " VALUES(?,?,?,?,?,?,?,?,?,?)",
                         (s["id"], it["guid"], it["title"], json.dumps(c["eps"]), "queued", int(time.time()),
                          c["score"], rel.resolution, rel.version, rel.group))
-        self.qbit.add(it["url"], "anirr-%d" % did, self.cfg["qbittorrent"].get("save_path"))
+        self.qbit.add(it["url"], "ilarr-%d" % did, self.cfg["qbittorrent"].get("save_path"))
         for n in c["eps"]:
             ep = self.db.one("SELECT status FROM episodes WHERE series_id=? AND number=?", (s["id"], n))
             if ep["status"] == "missing":
@@ -208,7 +222,7 @@ class Engine:
     def poll_downloads(self):
         for d in self.db.q("SELECT * FROM downloads WHERE status IN ('queued','downloading')"):
             try:
-                t = self.qbit.info("anirr-%d" % d["id"])
+                t = self.qbit.info("ilarr-%d" % d["id"])
             except Exception as e:
                 log.warning("qbittorrent unreachable: %s", e)
                 return
