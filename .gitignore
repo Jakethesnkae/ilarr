@@ -5,6 +5,4 @@ config.json
 library/
 .env
 config/
-qbittorrent-config/
 downloads/
-prowlarr-config/

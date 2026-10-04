@@ -23,13 +23,17 @@ Make sure Prowlarr's anime indexers report category 5070 and seeders; ilarr reje
 
 ## Docker
 ```
-cp .env.example .env        # set QBIT_PASS, optional TMDB/TVDB keys
-docker compose up -d        # ilarr on :8989, qBittorrent on :8080
+cp .env.example .env        # set QBIT_URL/USER/PASS, PROWLARR_URL/API_KEY, optional TMDB/TVDB keys
+docker compose up -d        # ilarr on :8989
 ```
-`docker-compose.yml` runs ilarr plus qBittorrent sharing one downloads folder. State (config + DB) lives in `./config`.
-Settings can come from `config/config.json` or env vars (`ILARR_QBIT_URL`, `ILARR_QBIT_USER`, `ILARR_QBIT_PASS`,
-`ILARR_QBIT_SAVE_PATH`, `ILARR_TMDB_KEY`, `ILARR_TVDB_KEY`, `ILARR_SEASON_SOURCE`, `ILARR_HOST`, `ILARR_PORT`, `ILARR_DB`,
-`ILARR_LIBRARY`); env vars win. Using your own qBittorrent: delete that service and mount its download folder at the same path.
+The compose file runs only ilarr; qBittorrent and Prowlarr are expected to exist already. Reach them by their LAN address,
+container name on a shared Docker network, or `host.docker.internal` (the default) for services on the Docker host.
+`DOWNLOADS_DIR` must be the same host folder qBittorrent saves to; it is mounted at `/downloads` and `ILARR_QBIT_SAVE_PATH`
+tells qBittorrent to save there. State (config + DB) lives in `./config`. Hardlink import needs `DOWNLOADS_DIR` and
+`LIBRARY_DIR` on the same disk, otherwise set `import_mode` to `copy` in `config/config.json`.
+Settings can also come from `config/config.json`; env vars win (`ILARR_QBIT_URL`, `ILARR_QBIT_USER`, `ILARR_QBIT_PASS`,
+`ILARR_QBIT_SAVE_PATH`, `ILARR_PROWLARR_URL`, `ILARR_PROWLARR_KEY`, `ILARR_TMDB_KEY`, `ILARR_TVDB_KEY`,
+`ILARR_SEASON_SOURCE`, `ILARR_HOST`, `ILARR_PORT`, `ILARR_DB`, `ILARR_LIBRARY`).
 Don't expose port 8989 to the internet: the UI has no authentication.
 
 ## How it avoids Sonarr's anime pain points

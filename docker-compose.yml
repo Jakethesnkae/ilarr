@@ -1,4 +1,4 @@
-# Put secrets in a .env file next to this one (see .env.example).
+# ilarr only. qBittorrent and Prowlarr run elsewhere; point to them in .env (see .env.example).
 services:
   ilarr:
     build: .
@@ -6,13 +6,15 @@ services:
     restart: unless-stopped
     ports:
       - "8989:8989"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets the defaults reach services on the Docker host
     environment:
-      ILARR_QBIT_URL: http://qbittorrent:8080
+      ILARR_QBIT_URL: ${QBIT_URL:-http://host.docker.internal:8080}
       ILARR_QBIT_USER: ${QBIT_USER:-admin}
       ILARR_QBIT_PASS: ${QBIT_PASS:-adminadmin}
-      # Must be the path *inside the shared volume*, so ilarr can read what qBittorrent downloads
+      # Folder where qBittorrent saves, as seen from *inside this container* (mounted below)
       ILARR_QBIT_SAVE_PATH: /downloads
-      ILARR_PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
+      ILARR_PROWLARR_URL: ${PROWLARR_URL:-http://host.docker.internal:9696}
       ILARR_PROWLARR_KEY: ${PROWLARR_API_KEY:-}
       ILARR_TMDB_KEY: ${TMDB_API_KEY:-}
       ILARR_TVDB_KEY: ${TVDB_API_KEY:-}
@@ -20,39 +22,4 @@ services:
     volumes:
       - ./config:/config
       - ${LIBRARY_DIR:-./library}:/library
-      - ${DOWNLOADS_DIR:-./downloads}:/downloads   # same host dir qBittorrent writes to
-    depends_on:
-      - qbittorrent
-
-  # Prowlarr: add your indexers there (Nyaa, AnimeTosho, ...), then copy its API key
-  # (Settings > General) into .env. ilarr reads its aggregate Torznab feed, category 5070 (Anime).
-  prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
-    container_name: prowlarr
-    restart: unless-stopped
-    environment:
-      PUID: 1000
-      PGID: 1000
-      TZ: ${TZ:-UTC}
-    ports:
-      - "9696:9696"
-    volumes:
-      - ./prowlarr-config:/config
-
-  # Optional: remove this service and point ILARR_QBIT_URL at your own qBittorrent
-  # (then mount its download dir at the same path in ilarr; hardlinks need the same filesystem
-  # as the library, so keep DOWNLOADS_DIR and LIBRARY_DIR on one disk or set import_mode=copy).
-  qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
-    container_name: qbittorrent
-    restart: unless-stopped
-    environment:
-      PUID: 1000
-      PGID: 1000
-      TZ: ${TZ:-UTC}
-      WEBUI_PORT: 8080
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./qbittorrent-config:/config
-      - ${DOWNLOADS_DIR:-./downloads}:/downloads
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads   # the same host folder qBittorrent downloads to
