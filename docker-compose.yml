@@ -12,6 +12,8 @@ services:
       ILARR_QBIT_PASS: ${QBIT_PASS:-adminadmin}
       # Must be the path *inside the shared volume*, so ilarr can read what qBittorrent downloads
       ILARR_QBIT_SAVE_PATH: /downloads
+      ILARR_PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
+      ILARR_PROWLARR_KEY: ${PROWLARR_API_KEY:-}
       ILARR_TMDB_KEY: ${TMDB_API_KEY:-}
       ILARR_TVDB_KEY: ${TVDB_API_KEY:-}
       ILARR_SEASON_SOURCE: ${SEASON_SOURCE:-anilist}   # anilist | tvdb | tmdb
@@ -21,6 +23,21 @@ services:
       - ${DOWNLOADS_DIR:-./downloads}:/downloads   # same host dir qBittorrent writes to
     depends_on:
       - qbittorrent
+
+  # Prowlarr: add your indexers there (Nyaa, AnimeTosho, ...), then copy its API key
+  # (Settings > General) into .env. ilarr reads its aggregate Torznab feed, category 5070 (Anime).
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: ${TZ:-UTC}
+    ports:
+      - "9696:9696"
+    volumes:
+      - ./prowlarr-config:/config
 
   # Optional: remove this service and point ILARR_QBIT_URL at your own qBittorrent
   # (then mount its download dir at the same path in ilarr; hardlinks need the same filesystem

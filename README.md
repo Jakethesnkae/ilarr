@@ -11,6 +11,16 @@ python -m ilarr serve                 # scheduler + web UI on http://127.0.0.1:8
 python -m unittest tests.test_core    # offline tests
 ```
 
+## Prowlarr
+Add your anime indexers in Prowlarr, copy its API key (Settings > General), then either set it in `config.json`:
+```json
+"prowlarr": {"url": "http://localhost:9696", "api_key": "KEY", "indexers": ["all"], "categories": [5070]}
+```
+or use `ILARR_PROWLARR_URL` / `ILARR_PROWLARR_KEY`. `"all"` is Prowlarr's aggregate feed; use indexer ids (e.g. `["3","7"]`)
+to pick specific ones. Any Torznab source (Jackett too) also works as a plain entry in `indexers`:
+`{"name": "x", "type": "torznab", "url": "http://host:9117/api/v2.0/indexers/all/results/torznab", "api_key": "KEY"}`.
+Make sure Prowlarr's anime indexers report category 5070 and seeders; ilarr rejects releases below the profile's `min_seeders`.
+
 ## Docker
 ```
 cp .env.example .env        # set QBIT_PASS, optional TMDB/TVDB keys

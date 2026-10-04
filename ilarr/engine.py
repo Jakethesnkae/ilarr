@@ -22,6 +22,8 @@ DEFAULT_CONFIG = {
     "indexers": [{"name": "Nyaa", "url": "https://nyaa.si/?page=rss&c=1_2&f=0&q={query}"}],
     "qbittorrent": {"url": "http://127.0.0.1:8080", "username": "admin", "password": "adminadmin",
                     "category": "ilarr", "save_path": None},
+    # Prowlarr: one Torznab feed per entry in `indexers` ("all" = every indexer you enabled in Prowlarr)
+    "prowlarr": {"url": "", "api_key": "", "indexers": ["all"], "categories": [5070]},
     "tmdb": {"api_key": ""},
     "tvdb": {"api_key": "", "pin": ""},
     "season_source": "anilist",       # anilist | tmdb | tvdb  (which season layout to name files with)
@@ -53,6 +55,8 @@ def load_config(path):
     if env("ILARR_QBIT_USER"): cfg["qbittorrent"]["username"] = env("ILARR_QBIT_USER")
     if env("ILARR_QBIT_PASS"): cfg["qbittorrent"]["password"] = env("ILARR_QBIT_PASS")
     if env("ILARR_QBIT_SAVE_PATH"): cfg["qbittorrent"]["save_path"] = env("ILARR_QBIT_SAVE_PATH")
+    if env("ILARR_PROWLARR_URL"): cfg["prowlarr"]["url"] = env("ILARR_PROWLARR_URL")
+    if env("ILARR_PROWLARR_KEY"): cfg["prowlarr"]["api_key"] = env("ILARR_PROWLARR_KEY")
     if env("ILARR_TMDB_KEY"): cfg["tmdb"]["api_key"] = env("ILARR_TMDB_KEY")
     if env("ILARR_TVDB_KEY"): cfg["tvdb"]["api_key"] = env("ILARR_TVDB_KEY")
     if env("ILARR_TVDB_PIN"): cfg["tvdb"]["pin"] = env("ILARR_TVDB_PIN")
@@ -69,6 +73,7 @@ class Engine:
         self.cfg, self.db = cfg, db
         q = cfg["qbittorrent"]
         self.qbit = QBit(q["url"], q["username"], q["password"], q["category"])
+        self.indexers = cfg["indexers"] + indexers.prowlarr_indexers(cfg["prowlarr"])
         self.tmdb = Tmdb(cfg["tmdb"]["api_key"]) if cfg["tmdb"].get("api_key") else None
         self.tvdb = Tvdb(cfg["tvdb"]["api_key"], cfg["tvdb"].get("pin")) if cfg["tvdb"].get("api_key") else None
 
@@ -140,7 +145,7 @@ class Engine:
         items, seen = [], set()
 
         def pull(q):
-            for ix in self.cfg["indexers"]:
+            for ix in self.indexers:
                 try:
                     for it in indexers.fetch(ix, q):
                         if it["guid"] not in seen:
