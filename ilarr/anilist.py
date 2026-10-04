@@ -9,6 +9,7 @@ from .http import get_json
 URL = "https://graphql.anilist.co"
 FIELDS = """id format status episodes seasonYear
  title{romaji english native} synonyms startDate{year}
+ coverImage{extraLarge large} bannerImage description(asHtml:false)
  nextAiringEpisode{episode airingAt}
  airingSchedule(perPage:150){nodes{episode airingAt}}
  relations{edges{relationType node{id format episodes title{romaji english}}}}"""
@@ -35,6 +36,9 @@ def _norm(m):
         "title": t.get("romaji") or t.get("english") or "", "english": t.get("english"),
         "native": t.get("native"), "synonyms": m.get("synonyms") or [],
         "year": (m.get("startDate") or {}).get("year") or m.get("seasonYear"),
+        "cover": (m.get("coverImage") or {}).get("extraLarge") or (m.get("coverImage") or {}).get("large"),
+        "banner": m.get("bannerImage"),
+        "description": re.sub(r"<[^>]+>", " ", m.get("description") or "").strip(),
         "schedule": sched, "max_known": max(list(sched) + [total or 0]),
         "relations": [{"type": e["relationType"], "id": e["node"]["id"], "format": e["node"]["format"],
                        "episodes": e["node"]["episodes"]} for e in m["relations"]["edges"]],

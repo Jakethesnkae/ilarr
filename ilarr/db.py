@@ -29,6 +29,11 @@ class DB:
         self.c.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         self.c.executescript(SCHEMA)
+        have = {r[1] for r in self.c.execute("PRAGMA table_info(series)")}
+        for col in ("cover", "banner", "description"):  # added after v0.1
+            if col not in have:
+                self.c.execute("ALTER TABLE series ADD COLUMN %s TEXT" % col)
+        self.c.commit()
 
     def q(self, sql, args=()):
         with self.lock:

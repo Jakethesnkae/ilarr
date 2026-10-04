@@ -1,81 +1,162 @@
-"""Tiny JSON API + single-page UI."""
+"""JSON API + the single-page UI in static/index.html."""
 import json
+import os
+import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from . import anilist
 
-PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>ilarr</title><style>
-body{font:15px system-ui;max-width:900px;margin:2rem auto;padding:0 1rem;background:#111;color:#ddd}
-input,button{font:inherit;padding:.4rem .6rem;background:#222;color:#ddd;border:1px solid #444;border-radius:4px}
-button{cursor:pointer}a{color:#7ab}table{width:100%;border-collapse:collapse}td,th{padding:.3rem;text-align:left;border-bottom:1px solid #222}
-.missing{color:#e66}.queued{color:#ea4}.downloaded{color:#6c6}small{color:#888}</style>
-<h2>ilarr</h2>
-<p><input id=q placeholder="search AniList"> <button onclick=find()>Search</button>
-<button onclick="post('/api/run').then(load)">Run cycle</button></p>
-<div id=res></div><h3>Series</h3><table id=list></table><div id=eps></div>
-<script>
-const j=(u,o)=>fetch(u,o).then(r=>r.json());
-const post=(u,b)=>j(u,{method:'POST',body:JSON.stringify(b||{})});
-async function find(){const r=await j('/api/search?q='+encodeURIComponent(q.value));
- res.innerHTML=r.map(m=>`<div>${m.title} <small>${m.format} · ${m.total||'?'} eps · ${m.year||''}</small>
- <button onclick="add(${m.id})">Add</button></div>`).join('')}
-async function add(id){const r=await post('/api/series',{anilist_id:id});if(r.error)alert(r.error);res.innerHTML='';load()}
-async function load(){const r=await j('/api/series');
- list.innerHTML='<tr><th>Title<th>Fmt<th>Season<th>Abs<th>Have</tr>'+r.map(s=>`<tr><td><a href=# onclick="show(${s.id});return false">${s.title}</a>
- <td>${s.format}<td>${s.season}${s.season_offset?'+'+s.season_offset:''}<td>${s.abs_offset}<td>${s.have}/${s.total||'?'}</tr>`).join('')}
-async function show(id){const r=await j('/api/series/'+id+'/episodes');
- eps.innerHTML='<h3>Episodes</h3><table>'+r.map(e=>`<tr><td>${e.number}<td class=${e.status}>${e.status}
- <td>${e.air_date>1?new Date(e.air_date*1000).toLocaleString():''}<td><small>${e.file||''}</small></tr>`).join('')+'</table>'}
-load()
-</script>"""
+STATIC = os.path.join(os.path.dirname(__file__), "static")
+SERIES_COLS = ("id,anilist_id,title,title_english,title_native,format,status,total,season,season_offset,abs_offset,"
+               "monitored,cover,banner,description,start_year,tmdb_id,tvdb_id,path")
+
+
+def redacted(cfg):
+    c = json.loads(json.dumps(cfg))
+    c["qbittorrent"]["password"] = "***" if c["qbittorrent"].get("password") else ""
+    for k in ("tmdb", "tvdb", "prowlarr"):
+        if c[k].get("api_key"):
+            c[k]["api_key"] = "***"
+    return c
 
 
 def serve(engine, host, port, run_cycle):
-    db = engine.db
+    db, cfg = engine.db, engine.cfg
+
+    def series_rows(where="", args=()):
+        return db.q("SELECT %s, (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id AND e.status='downloaded') AS have,"
+                    " (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id AND e.status='queued') AS queued,"
+                    " (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id AND e.status='missing'"
+                    "  AND e.air_date IS NOT NULL AND e.air_date<=?) AS missing,"
+                    " (SELECT MIN(air_date) FROM episodes e WHERE e.series_id=s.id AND e.air_date>?) AS next_air"
+                    " FROM series s %s ORDER BY title COLLATE NOCASE" % (SERIES_COLS, where),
+                    (int(time.time()), int(time.time())) + tuple(args))
+
+    def episode_rows(where, args, order="", limit=500):
+        return db.q("SELECT e.*, s.title, s.title_english, s.cover, s.season, s.season_offset, s.abs_offset, s.format"
+                    " FROM episodes e JOIN series s ON s.id=e.series_id WHERE s.monitored=1 AND %s %s LIMIT %d"
+                    % (where, order, limit), args)
+
+    routes = []
+
+    def route(method, pattern):
+        def deco(fn):
+            routes.append((method, re.compile("^" + pattern + "$"), fn))
+            return fn
+        return deco
+
+    @route("GET", "/api/status")
+    def status(q, body):
+        t = int(time.time())
+        return {"version": "0.1", "running": engine.running, "last_cycle": engine.last_cycle,
+                "series": db.one("SELECT COUNT(*) n FROM series")["n"],
+                "missing": db.one("SELECT COUNT(*) n FROM episodes e JOIN series s ON s.id=e.series_id"
+                                  " WHERE s.monitored=1 AND e.status='missing' AND e.air_date IS NOT NULL"
+                                  " AND e.air_date<=?", (t,))["n"],
+                "downloading": db.one("SELECT COUNT(*) n FROM downloads WHERE status IN ('queued','downloading')")["n"],
+                "indexers": len(engine.indexers), "interval_minutes": cfg["interval_minutes"],
+                "providers": {"prowlarr": bool(cfg["prowlarr"].get("url") and cfg["prowlarr"].get("api_key")),
+                              "tmdb": bool(engine.tmdb), "tvdb": bool(engine.tvdb)},
+                "season_source": cfg["season_source"], "config": redacted(cfg)}
+
+    @route("GET", "/api/search")
+    def search(q, body):
+        tracked = {r["anilist_id"] for r in db.q("SELECT anilist_id FROM series")}
+        out = anilist.search(q.get("q", [""])[0])
+        for m in out:
+            m["tracked"] = m["id"] in tracked
+        return out
+
+    @route("GET", "/api/series")
+    def series_list(q, body):
+        return series_rows()
+
+    @route("POST", "/api/series")
+    def series_add(q, body):
+        return {"id": engine.add_series(body["anilist_id"], body.get("tmdb_id"), body.get("tvdb_id"))}
+
+    @route("GET", r"/api/series/(\d+)")
+    def series_get(q, body, sid):
+        rows = series_rows("WHERE s.id=?", (sid,))
+        if not rows:
+            raise KeyError
+        rows[0]["episodes"] = db.q("SELECT * FROM episodes WHERE series_id=? ORDER BY number", (sid,))
+        return rows[0]
+
+    @route("PATCH", r"/api/series/(\d+)")
+    def series_patch(q, body, sid):
+        allowed = {k: body[k] for k in ("monitored", "season", "season_offset", "abs_offset") if k in body}
+        if allowed:
+            db.update("series", "id", sid, **allowed)
+        return {"ok": True}
+
+    @route("DELETE", r"/api/series/(\d+)")
+    def series_delete(q, body, sid):
+        engine.delete_series(int(sid))
+        return {"ok": True}
+
+    @route("POST", r"/api/series/(\d+)/refresh")
+    def series_refresh(q, body, sid):
+        engine.refresh_episodes(int(sid))
+        return {"ok": True}
+
+    @route("GET", "/api/wanted")
+    def wanted(q, body):
+        return episode_rows("e.status='missing' AND e.air_date IS NOT NULL AND e.air_date<=?",
+                            (int(time.time()),), "ORDER BY e.air_date DESC")
+
+    @route("GET", "/api/upcoming")
+    def upcoming(q, body):
+        now = int(time.time())
+        return episode_rows("e.air_date>? AND e.air_date<?", (now - 86400, now + 45 * 86400), "ORDER BY e.air_date")
+
+    @route("GET", "/api/downloads")
+    def downloads(q, body):
+        return db.q("SELECT d.*, s.title, s.cover FROM downloads d LEFT JOIN series s ON s.id=d.series_id"
+                    " ORDER BY d.id DESC LIMIT 100")
+
+    @route("POST", "/api/run")
+    def run(q, body):
+        threading.Thread(target=run_cycle, daemon=True).start()
+        return {"ok": True}
 
     class H(BaseHTTPRequestHandler):
-        def _send(self, obj, code=200, ctype="application/json"):
-            body = (obj if isinstance(obj, str) else json.dumps(obj)).encode()
+        def _send(self, obj, code=200, ctype="application/json", cache=None):
+            payload = (obj if isinstance(obj, (str, bytes)) else json.dumps(obj))
+            payload = payload.encode() if isinstance(payload, str) else payload
             self.send_response(code)
             self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Length", str(len(payload)))
+            if cache:
+                self.send_header("Cache-Control", cache)
             self.end_headers()
-            self.wfile.write(body)
+            self.wfile.write(payload)
 
-        def do_GET(self):
+        def _dispatch(self, method):
             u = urlparse(self.path)
-            try:
-                if u.path == "/":
-                    return self._send(PAGE, ctype="text/html; charset=utf-8")
-                if u.path == "/api/search":
-                    return self._send(anilist.search(parse_qs(u.query).get("q", [""])[0]))
-                if u.path == "/api/series":
-                    rows = db.q("SELECT s.*, (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id"
-                                " AND e.status='downloaded') AS have FROM series s ORDER BY title")
-                    return self._send(rows)
-                parts = u.path.strip("/").split("/")
-                if len(parts) == 4 and parts[:2] == ["api", "series"] and parts[3] == "episodes":
-                    return self._send(db.q("SELECT * FROM episodes WHERE series_id=? ORDER BY number", (parts[2],)))
-                self._send({"error": "not found"}, 404)
-            except Exception as e:
-                self._send({"error": str(e)}, 500)
-
-        def do_POST(self):
+            if method == "GET" and not u.path.startswith("/api/"):
+                with open(os.path.join(STATIC, "index.html"), "rb") as f:
+                    return self._send(f.read(), ctype="text/html; charset=utf-8", cache="no-cache")
             n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n) or b"{}")
-            try:
-                if self.path == "/api/series":
-                    return self._send({"id": engine.add_series(
-                        body["anilist_id"], body.get("tmdb_id"), body.get("tvdb_id"))})
-                if self.path == "/api/run":
-                    threading.Thread(target=run_cycle, daemon=True).start()
-                    return self._send({"ok": True})
-                self._send({"error": "not found"}, 404)
-            except Exception as e:
-                self._send({"error": str(e)}, 400)
+            body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+            for m, pat, fn in routes:
+                hit = pat.match(u.path)
+                if m == method and hit:
+                    try:
+                        return self._send(fn(parse_qs(u.query), body, *hit.groups()))
+                    except KeyError:
+                        return self._send({"error": "not found"}, 404)
+                    except Exception as e:
+                        return self._send({"error": str(e)}, 400)
+            self._send({"error": "not found"}, 404)
+
+        do_GET = lambda self: self._dispatch("GET")
+        do_POST = lambda self: self._dispatch("POST")
+        do_PATCH = lambda self: self._dispatch("PATCH")
+        do_DELETE = lambda self: self._dispatch("DELETE")
 
         def log_message(self, *a):
             pass

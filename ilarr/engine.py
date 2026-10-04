@@ -113,23 +113,30 @@ class Engine:
         folder = path or os.path.join(self.cfg["library"], safe(root["english"] or root["title"]))
         sid = self.db.x(
             "INSERT INTO series(anilist_id,franchise_id,tmdb_id,tvdb_id,title,title_english,title_native,format,"
-            "status,total,season,season_offset,abs_offset,aliases,franchise_aliases,path,profile,start_year)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "status,total,season,season_offset,abs_offset,aliases,franchise_aliases,path,profile,start_year,"
+            "cover,banner,description) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (m["id"], root["id"], ids["tmdb"], ids["tvdb"], m["title"], m["english"], m["native"], m["format"],
              m["status"], m["total"], season, soff, aoff, json.dumps(aliases), json.dumps(fam_aliases),
-             folder, json.dumps(profile), m["year"]))
+             folder, json.dumps(profile), m["year"], m["cover"], m["banner"], m["description"]))
         self.refresh_episodes(sid)
         return sid
 
     def refresh_episodes(self, sid):
         s = self.db.one("SELECT * FROM series WHERE id=?", (sid,))
         m = anilist.get(s["anilist_id"], fresh=True)
-        self.db.update("series", "id", sid, status=m["status"], total=m["total"])
+        self.db.update("series", "id", sid, status=m["status"], total=m["total"],
+                       cover=m["cover"], banner=m["banner"], description=m["description"])
         for n in range(1, m["max_known"] + 1):
             aired = m["schedule"].get(n) or (1 if m["status"] == "FINISHED" else None)
             self.db.x("INSERT OR IGNORE INTO episodes(series_id,number,air_date) VALUES(?,?,?)", (sid, n, aired))
             if aired:
                 self.db.x("UPDATE episodes SET air_date=? WHERE series_id=? AND number=?", (aired, sid, n))
+
+    def delete_series(self, sid):
+        """Stop tracking; files already in the library are left alone."""
+        for t in ("episodes", "downloads"):
+            self.db.x("DELETE FROM %s WHERE series_id=?" % t, (sid,))
+        self.db.x("DELETE FROM series WHERE id=?", (sid,))
 
     def tracked(self):
         return self.db.q("SELECT * FROM series WHERE monitored=1")
@@ -311,6 +318,15 @@ class Engine:
 
     # ------------------------------------------------------------------ loop
     def cycle(self, refresh=False):
+        self.running = True
+        try:
+            self._cycle(refresh)
+        finally:
+            self.running, self.last_cycle = False, int(time.time())
+
+    running, last_cycle = False, None
+
+    def _cycle(self, refresh=False):
         if refresh:
             for s in self.tracked():
                 if s["status"] != "FINISHED":

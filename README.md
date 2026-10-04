@@ -54,6 +54,8 @@ Put keys in `config.json` (`tmdb.api_key`; `tvdb.api_key` + optional `pin`). The
 skipped. IDs are auto-found by title/year, or forced via `add --tvdb/--tmdb`. They add aliases and a season layout.
 
 ## Layout
+Web UI: `ilarr/static/index.html` (poster grid, series detail, calendar, wanted, activity, settings; light/dark; mobile layout).
+
 `parser` → `matcher` → `quality` (profiles, custom formats, upgrades) → `engine` (add/refresh, RSS+search, grab, import,
 failed-download retry via blacklist) · `anilist`, `providers`, `indexers`, `qbit` · `web` · `__main__`.
 
