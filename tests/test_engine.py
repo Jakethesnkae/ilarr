@@ -12,7 +12,10 @@ from ilarr.web import redacted
 
 
 class ImportTests(unittest.TestCase):
+    """Check import safety, transfer modes, and shared episode file cleanup."""
+
     def setUp(self):
+        """Create an isolated database, existing episode, and replacement video."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -34,9 +37,11 @@ class ImportTests(unittest.TestCase):
         self.download = dict(score=2000, res=1080, version=2, grp='G')
 
     def place(self):
+        """Import the replacement video for the fixture's first episode."""
         self.engine.place(self.series, str(self.source), [1], self.rel, self.download)
 
     def test_missing_source_preserves_existing_file_and_metadata(self):
+        """Verify every import mode preserves the episode when its source is missing."""
         self.source.unlink()
         before = self.db.q('SELECT * FROM episodes')
         for mode in ('copy', 'hardlink', 'move'):
@@ -49,8 +54,10 @@ class ImportTests(unittest.TestCase):
                 self.assertEqual(list(self.destination.parent.glob('.ilarr-*')), [])
 
     def test_partial_copy_failure_preserves_existing_file(self):
+        """Verify a failed copy preserves the destination and removes staged data."""
         self.cfg['import_mode'] = 'copy'
         def fail_copy(src, dst):
+            """Simulate a copy that writes partial data before running out of space."""
             Path(dst).write_bytes(b'partial')
             raise OSError('disk full')
         with patch('ilarr.engine.shutil.copy2', side_effect=fail_copy):
@@ -60,6 +67,7 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(list(self.destination.parent.glob('.ilarr-*')), [])
 
     def test_publication_failure_preserves_move_source(self):
+        """Verify a failed move publication preserves both source and destination."""
         self.cfg['import_mode'] = 'move'
         with patch('ilarr.engine.os.replace', side_effect=OSError('cannot replace')):
             with self.assertRaises(OSError):
@@ -68,6 +76,7 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(self.destination.read_bytes(), b'original')
 
     def test_successful_import_modes(self):
+        """Check file contents, source retention, and metadata for each import mode."""
         for mode in ('copy', 'hardlink', 'move'):
             with self.subTest(mode=mode):
                 self.cfg['import_mode'] = mode
@@ -80,12 +89,14 @@ class ImportTests(unittest.TestCase):
                 self.assertEqual((ep['status'], ep['version']), ('downloaded', 2))
 
     def test_hardlink_fallback_copies(self):
+        """Verify an unavailable hardlink falls back to copying and retains the source."""
         with patch('ilarr.engine.os.link', side_effect=OSError('cross-device link')):
             self.place()
         self.assertEqual(self.destination.read_bytes(), b'replacement')
         self.assertTrue(self.source.exists())
 
     def test_shared_file_survives_until_last_episode_is_upgraded(self):
+        """Keep a shared video until its last referencing episode is upgraded."""
         shared = self.root / 'batch.mkv'
         shared.write_bytes(b'episodes 1 and 2')
         self.db.x('UPDATE episodes SET file=?', (str(shared),))
@@ -99,8 +110,11 @@ class ImportTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    """Check release eligibility at airtime and release delay boundaries."""
+
     @patch('ilarr.engine.time.time', return_value=10000)
     def test_airtime_and_delay_boundaries(self, clock):
+        """Verify missing episodes and upgrades both respect the release delay."""
         engine = Engine(copy.deepcopy(DEFAULT_CONFIG), None)
         rel = parse('Show - 01 [1080p]')
         series = dict(profile={})
@@ -115,7 +129,10 @@ class SelectionTests(unittest.TestCase):
 
 
 class RedactionTests(unittest.TestCase):
+    """Check credential masking in configuration views."""
+
     def test_masks_credentials_without_modifying_configuration(self):
+        """Verify credentials are masked in a copy without changing the configuration."""
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg['tvdb']['pin'] = 'synthetic-pin'
         cfg['indexers'] = [dict(name='custom', api_key='synthetic-key'), dict(name='public')]

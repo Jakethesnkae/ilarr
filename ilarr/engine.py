@@ -209,6 +209,7 @@ class Engine:
         return grabbed
 
     def _wants(self, ep, s, rel, score):
+        """Return whether a release fills a gap or upgrades an episode after its delay."""
         cutoff = time.time() - self.cfg["release_delay_minutes"] * 60
         if not ep or not ep["air_date"] or ep["air_date"] > cutoff:
             return False
@@ -287,6 +288,13 @@ class Engine:
         self.db.update("downloads", "id", d["id"], status="imported")
 
     def place(self, s, src, eps, rel, d):
+        """Stage and publish a video, then update its episodes and remove unused files.
+
+        Use the configured copy, hardlink, or move mode, falling back to copying
+        when linking fails. Preserve the destination if staging or publication
+        fails, and retain a move source until publication and metadata updates
+        succeed. Remove replaced files only when no episodes reference them.
+        """
         ext = os.path.splitext(src)[1]
         tag = "E%02d" % (s["season_offset"] + eps[0])
         if len(eps) > 1:
